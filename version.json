@@ -1,0 +1,7 @@
+{
+  "version": "1.6.0 PRO",
+  "download_url": "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/app/main.py",
+  "exe_url": "https://github.com/Andryan27/hp-repair-pro/releases/download/v1.6.0/AN-TECH-PRO-v1.6.0.exe",
+  "changelog": "- Fitur baru: Log bisa copy paste klik kanan\n- Battery Live Monitor V/A\n- Auto Update tanpa ubah desain\n- Fix lock detection",
+  "mandatory": false
+}
