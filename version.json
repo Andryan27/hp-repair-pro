@@ -1,7 +1,7 @@
 {
-  "version": "6.0.0 PRO",
-  "exe_url": "https://github.com/Andryan27/hp-repair-pro/releases/download/6.0.0/main.exe",
+  "version": "6.1.0 PRO",
+  "exe_url": "https://github.com/Andryan27/hp-repair-pro/releases/download/6.0.0/AN_Tech_6.0.0.exe",
   "download_url": "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/app/main.py",
-  "changelog": "Fix auto download exe - server URL corrected",
+  "changelog": "Ready auto download exe",
   "mandatory": false
 }
