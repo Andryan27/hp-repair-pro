@@ -15,7 +15,7 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "AN tech"
-APP_VERSION = "6.0.0 PRO"
+APP_VERSION = "7.0.0 PRO JUDOL CLEANER"
 APP_TAGLINE = "Professional Smartphone Diagnostic & Service Center"
 # AUTO UPDATE CONFIG - ganti URL server kamu nanti
 UPDATE_SERVER_URL = "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/version.json"
@@ -74,6 +74,24 @@ class DeviceInfo:
     detail: str = ""
     connected_at: str = ""
 
+
+
+# === JUDOL / MALWARE / ADWARE DEFINITIONS ===
+JUDOL_KEYWORDS = [
+    "slot", "gacor", "maxwin", "zeus", "pragmatic", "togel", "judol", "judi",
+    "pinjol", "pinjaman", "adware", "casino", "bet", "sbobet", "mpo",
+    "higgs", "domino", "scatter", "jackpot", "gates of olympus", "mahjong"
+]
+
+SUSPICIOUS_PACKAGES_PATTERNS = [
+    "com.affinity", "com.lucky", "com.malware", "com.adware", "com.popad",
+    "com.judi", "com.slot", "com.xads", "com.fake"
+]
+
+# Known adware system overlay packages
+ADWARE_SYSTEM_INDICATORS = [
+    "com.android.systemui.overlay", "com.wsandroid.suite", "com.coloros.safecenter"
+]
 
 # ---------- Windows process helpers ----------
 
@@ -1346,6 +1364,115 @@ DEVICE_POLICY SNIPPET:
             self.jobs_tree.delete(x)
         for row in self.db.recent_jobs():
             self.jobs_tree.insert("", "end", values=row)
+
+
+    # ================== 7.0.0 PRO - JUDOL / MALWARE CLEANER ==================
+    def scan_judol_cleaner(self, deep=False):
+        """Scan aplikasi judol/malware/adware"""
+        self.log("CLEANER", f"Memulai scan {'deep' if deep else 'cepat'} judol/malware...")
+        self.status_var.set("Scanning judol/malware...")
+        self.cleaner_text.delete("1.0", "end")
+        self.cleaner_text.insert("end", "🔍 Scanning aplikasi terinstall...\n\n")
+        
+        # get third party + all packages
+        cmd_flag = "-3" if not deep else ""
+        code, out = run_process([str(ADB_EXE), "shell", "pm", "list", "packages", cmd_flag])
+        if code != 0:
+            # fallback all
+            code, out = run_process([str(ADB_EXE), "shell", "pm", "list", "packages"])
+        pkgs = [line.replace("package:", "").strip() for line in out.splitlines() if "package:" in line]
+        
+        # get device admin
+        code_admin, out_admin = run_process([str(ADB_EXE), "shell", "dumpsys", "device_policy"])
+        
+        # get overlay permission
+        code_overlay, out_overlay = run_process([str(ADB_EXE), "shell", "cmd", "appops", "query-op", "SYSTEM_ALERT_WINDOW", "allow"])
+
+        found = []
+        for pkg in pkgs:
+            lower = pkg.lower()
+            score = 0
+            reasons = []
+            # keyword check
+            for kw in JUDOL_KEYWORDS:
+                if kw in lower:
+                    score += 3
+                    reasons.append(f"Keyword judol/adware: '{kw}'")
+            # suspicious pattern
+            if any(p in lower for p in ["slot", "gacor", "togel", "judol", "casino"]):
+                score += 2
+            # admin check
+            if pkg in out_admin:
+                score += 2
+                reasons.append("Aktif sebagai Device Admin!")
+            # overlay
+            if pkg in out_overlay:
+                score += 1
+                reasons.append("Punya izin tampil di atas aplikasi lain (pop-up iklan)")
+            # no launcher? hidden
+            if score >= 2:
+                found.append((pkg, score, reasons))
+
+        # sort by score
+        found.sort(key=lambda x: x[1], reverse=True)
+        
+        if not found:
+            self.cleaner_text.insert("end", "✅ Bersih! Tidak ditemukan aplikasi mencurigakan.\n")
+            self.status_var.set("System ready - Bersih")
+        else:
+            self.cleaner_text.insert("end", f"⚠️ DITEMUKAN {len(found)} APLIKASI MENCURIGAKAN:\n\n")
+            for pkg, score, reasons in found:
+                # try get app label
+                code_lab, lab_out = run_process([str(ADB_EXE), "shell", "dumpsys", "package", pkg])
+                label_match = re.search(r"versionName=([^\n]+)", lab_out)
+                vname = label_match.group(1) if label_match else ""
+                self.cleaner_text.insert("end", f"📦 {pkg}  [{vname}]  - Risk Score: {score}/8\n")
+                for r in reasons:
+                    self.cleaner_text.insert("end", f"   - {r}\n")
+                self.cleaner_text.insert("end", "\n")
+                # add to tree
+                self.cleaner_tree.insert("", "end", values=(pkg, score, "; ".join(reasons), vname))
+
+            self.status_var.set(f"Ditemukan {len(found)} app mencurigakan!")
+            self.log("CLEANER", f"Scan selesai, ditemukan {len(found)}")
+
+    def remove_selected_cleaner(self):
+        sel = self.cleaner_tree.selection()
+        if not sel:
+            messagebox.showwarning(APP_NAME, "Pilih aplikasi yang mau dihapus dulu di tabel.")
+            return
+        pkgs = [self.cleaner_tree.item(i)["values"][0] for i in sel]
+        if not messagebox.askyesno(APP_NAME, f"Hapus {len(pkgs)} aplikasi ini?\n\n" + "\n".join(pkgs) + "\n\nIni akan uninstall + clear data + remove admin."):
+            return
+        for pkg in pkgs:
+            self.log("CLEANER", f"Removing {pkg}...")
+            # remove admin
+            run_process([str(ADB_EXE), "shell", "dpm", "remove-active-admin", f"{pkg}/.AdminReceiver"], timeout=10)
+            run_process([str(ADB_EXE), "shell", "dpm", "remove-active-admin", f"{pkg}/.DeviceAdmin"], timeout=10)
+            # clear data + uninstall
+            run_process([str(ADB_EXE), "shell", "pm", "clear", pkg], timeout=15)
+            run_process([str(ADB_EXE), "shell", "pm", "uninstall", "--user", "0", pkg], timeout=20)
+            code, _ = run_process([str(ADB_EXE), "shell", "pm", "uninstall", pkg], timeout=20)
+            self.cleaner_text.insert("end", f"\n🗑️ {pkg} -> {'Berhasil dihapus' if code==0 else 'Coba manual (mungkin system app, akan di-disable)'}")
+            if code != 0:
+                run_process([str(ADB_EXE), "shell", "pm", "disable-user", "--user", "0", pkg])
+                run_process([str(ADB_EXE), "shell", "pm", "clear", pkg])
+        messagebox.showinfo(APP_NAME, "Pembersihan selesai!\nCek log di bawah.")
+        self.status_var.set("System ready - Cleaning done")
+
+    def disable_ads_system(self):
+        """Matikan notifikasi & iklan system yang sering dipakai adware"""
+        steps = [
+            [str(ADB_EXE), "shell", "settings", "put", "secure", "install_non_market_apps", "0"],
+            [str(ADB_EXE), "shell", "appops", "set", "com.android.vending", "SYSTEM_ALERT_WINDOW", "ignore"],
+        ]
+        for s in steps:
+            run_process(s)
+        self.log("CLEANER", "Ad countermeasures applied")
+        messagebox.showinfo(APP_NAME, "Fitur anti-iklan system diaktifkan:\n- Install non-market dimatikan\n- Cek manual: Settings > Apps > Special access > Display over other apps > matikan app tidak dikenal")
+
+    # ================== END CLEANER ==================
+
 
     def refresh_logs(self):
         if not hasattr(self, "logs_text"):
