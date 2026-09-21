@@ -15,10 +15,10 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "AN tech"
-APP_VERSION = "7.0.0 PRO JUDOL CLEANER"
+APP_VERSION = "7.1.0 PRO"
 APP_TAGLINE = "Professional Smartphone Diagnostic & Service Center"
 # AUTO UPDATE CONFIG - ganti URL server kamu nanti
-UPDATE_SERVER_URL = "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/version.json"
+UPDATE_SERVER_URL = os.environ.get("ANTECH_UPDATE_URL", "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/version.json")
 UPDATE_DOWNLOAD_URL = "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/app/main.py"
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "tools"
@@ -133,6 +133,53 @@ def sha256_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
                 break
             h.update(chunk)
     return h.hexdigest()
+
+
+def parse_version(value: str) -> tuple[int, ...]:
+    """Parse semantic-ish versions safely: 7.1.0 PRO -> (7,1,0)."""
+    nums = re.findall(r"\d+", value or "")
+    return tuple(int(x) for x in nums[:4]) or (0,)
+
+
+def version_is_newer(remote: str, current: str) -> bool:
+    a, b = parse_version(remote), parse_version(current)
+    n = max(len(a), len(b))
+    return (a + (0,) * (n-len(a))) > (b + (0,) * (n-len(b)))
+
+
+def shell_text(*parts: str) -> list[str]:
+    """Build an ADB shell command without shell=True."""
+    return ["shell", *[str(x) for x in parts]]
+
+
+def parse_key_values(text: str) -> dict[str, str]:
+    result = {}
+    for line in (text or "").splitlines():
+        if ":" in line:
+            k, v = line.split(":", 1)
+            result[k.strip()] = v.strip()
+    return result
+
+
+def classify_logcat(text: str) -> dict[str, list[str]]:
+    """Rule-based crash/fault classifier; deliberately avoids claiming hardware failure."""
+    patterns = {
+        "Kernel/Boot": r"(kernel panic|watchdog|fatal exception|bootloop|subsystem restart|ssr)",
+        "System Crash": r"(FATAL EXCEPTION|system_server.*(crash|died)|am_crash|system server.*fatal)",
+        "App Crash": r"(FATAL EXCEPTION IN MAIN|AndroidRuntime.*FATAL EXCEPTION|am_crash)",
+        "Storage": r"(I/O error|I/O error|mmc.*error|ufs.*error|fsck.*fail|eio|corrupt)",
+        "Modem/Radio": r"(modem.*(fatal|crash|restart)|subsystem.*modem|qmi.*(error|fail)|radio.*crash)",
+        "Display": r"(HwcComposer.*(failed|error)|SurfaceFlinger.*(fatal|error)|display.*(failed|error)|CWB.*error)",
+        "Thermal": r"(thermal.*(critical|shutdown|overheat)|overheat|thermal throttling)",
+    }
+    out = {k: [] for k in patterns}
+    lines = (text or "").splitlines()
+    for line in lines:
+        low = line.lower()
+        for cat, pat in patterns.items():
+            if re.search(pat, low, re.I):
+                out[cat].append(line.strip())
+    return out
 
 
 class Database:
@@ -459,7 +506,7 @@ class ANTechApp(tk.Tk):
         self.nav_buttons = {}
         for name, icon in [
             ("Dashboard", "▦"), ("Diagnostics", "⌁"), ("Service Center", "⚙"),
-            ("Firmware Lab", "▣"), ("Logs & Reports", "≡"), ("Settings", "⚙")
+            ("Cleaner Judol", "🧹"), ("Firmware Lab", "▣"), ("Logs & Reports", "≡"), ("Settings", "⚙")
         ]:
             btn = ttk.Button(self.sidebar, text=f"{icon}   {name}", style="Side.TButton", command=lambda n=name: self.show_page(n))
             btn.pack(fill="x", pady=2)
@@ -473,6 +520,7 @@ class ANTechApp(tk.Tk):
         self.pages["Dashboard"] = self._dashboard_page()
         self.pages["Diagnostics"] = self._diagnostics_page()
         self.pages["Service Center"] = self._service_page()
+        self.pages["Cleaner Judol"] = self._cleaner_page()
         self.pages["Firmware Lab"] = self._firmware_page()
         self.pages["Logs & Reports"] = self._logs_page()
         self.pages["Settings"] = self._settings_page()
@@ -524,7 +572,7 @@ class ANTechApp(tk.Tk):
         ttk.Label(head, text="Analisis mode, Android properties, battery state, verified boot, dan logcat snapshot.", style="SubHeader.TLabel").pack(anchor="w")
         toolrow = ttk.Frame(f)
         toolrow.pack(fill="x", pady=(0, 10))
-        ttk.Button(toolrow, text="Run Auto Diagnosis", style="Primary.TButton", command=self.auto_diagnose).pack(side="left")
+        ttk.Button(toolrow, text="Run Smart Diagnosis", style="Primary.TButton", command=self.auto_diagnose).pack(side="left")
         ttk.Button(toolrow, text="Refresh Properties", style="Ghost.TButton", command=self.adb_info).pack(side="left", padx=8)
         ttk.Button(toolrow, text="Logcat Snapshot", style="Ghost.TButton", command=self.adb_logcat).pack(side="left")
         ttk.Button(toolrow, text="Save Diagnostic Report", style="Ghost.TButton", command=self.export_report).pack(side="right")
@@ -654,10 +702,41 @@ class ANTechApp(tk.Tk):
         self.refresh_logs()
         return f
 
+
+    def _cleaner_page(self):
+        f = ttk.Frame(self.content)
+        ttk.Label(f, text="Cleaner Judol / Iklan / Malware PRO", style="Header.TLabel").pack(anchor="w", pady=(2, 3))
+        ttk.Label(f, text="Risk-based package audit untuk aplikasi mencurigakan/adware. Semua operasi ditargetkan ke ADB device yang dipilih.", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 12))
+        
+        top = ttk.Frame(f)
+        top.pack(fill="x", pady=5)
+        ttk.Button(top, text="🔍 Scan Cepat (App User)", style="Primary.TButton", command=lambda: self.scan_judol_cleaner(deep=False)).pack(side="left", padx=5)
+        ttk.Button(top, text="🔬 Deep Scan (Semua App + Admin)", style="Ghost.TButton", command=lambda: self.scan_judol_cleaner(deep=True)).pack(side="left", padx=5)
+        ttk.Button(top, text="🗑️ Hapus Terpilih", style="Danger.TButton", command=self.remove_selected_cleaner).pack(side="left", padx=10)
+        ttk.Button(top, text="🛡️ Anti Iklan", command=self.disable_ads_system).pack(side="left", padx=5)
+
+        # Tree
+        cols = ("package", "risk", "reason", "version")
+        self.cleaner_tree = ttk.Treeview(f, columns=cols, show="headings", height=18)
+        self.cleaner_tree.heading("package", text="Package Name")
+        self.cleaner_tree.heading("risk", text="Risk")
+        self.cleaner_tree.heading("reason", text="Alasan Deteksi")
+        self.cleaner_tree.heading("version", text="Versi")
+        self.cleaner_tree.column("package", width=280)
+        self.cleaner_tree.column("risk", width=60, anchor="center")
+        self.cleaner_tree.column("reason", width=380)
+        self.cleaner_tree.column("version", width=120)
+        self.cleaner_tree.pack(fill="both", expand=True, pady=10)
+
+        # Log text
+        self.cleaner_text = self._text(f, height=10)
+        self.cleaner_text.insert("1.0", "Siap scan...\n• Keyword: slot, gacor, maxwin, togel, judol, pinjol, casino, higgs domino\n• Cek Device Admin palsu & overlay pop-up\n\nColok HP > Scan Cepat\n")
+        return f
+
     def _settings_page(self):
         f = ttk.Frame(self.content)
         ttk.Label(f, text="Settings", style="Header.TLabel").pack(anchor="w", pady=(2, 3))
-        ttk.Label(f, text="Environment, tools, and local storage status.", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 12))
+        ttk.Label(f, text="Environment, tools, local storage, update integrity, and Windows-safe execution.", style="SubHeader.TLabel").pack(anchor="w", pady=(0, 12))
         box = self._card(f, "Environment")
         box.pack(fill="x")
         rows = [
@@ -905,7 +984,12 @@ class ANTechApp(tk.Tk):
 
     # --- ADB ---
     def adb_cmd(self, d: DeviceInfo, extra: list[str], timeout=20):
+        if d.mode != "ADB" or not d.serial:
+            return 2, "Invalid ADB device selection."
         return run_process([str(ADB_EXE), "-s", d.serial] + extra, timeout=timeout)
+
+    def _adb_shell(self, d: DeviceInfo, *parts: str, timeout=20):
+        return self.adb_cmd(d, shell_text(*parts), timeout=timeout)
 
     def adb_info(self):
         d = self.selected("ADB")
@@ -951,32 +1035,94 @@ class ANTechApp(tk.Tk):
         d = self.selected("ADB")
         if not d:
             return
+
         def work():
-            _, boot = self.adb_cmd(d, ["shell", "getprop", "ro.boot.verifiedbootstate"], timeout=8)
-            _, locked = self.adb_cmd(d, ["shell", "getprop", "ro.boot.flash.locked"], timeout=8)
-            _, slot = self.adb_cmd(d, ["shell", "getprop", "ro.boot.slot_suffix"], timeout=8)
-            _, health = self.adb_cmd(d, ["shell", "dumpsys", "battery"], timeout=8)
-            battery = re.search(r"level:\s*(\d+)", health)
-            temp = re.search(r"temperature:\s*(\d+)", health)
-            lvl = int(battery.group(1)) if battery else None
-            tmp = int(temp.group(1)) / 10 if temp else None
-            findings = []
-            findings.append(("ADB transport", "Connected", "OK"))
-            findings.append(("Verified Boot", boot or "unknown", "OK" if boot.strip().lower() in {"green", ""} else "CHECK"))
-            findings.append(("Bootloader", "Locked" if locked.strip() == "0" else "Unlocked/Unknown", "INFO"))
-            findings.append(("Slot", slot or "unknown", "INFO"))
-            findings.append(("Battery", f"{lvl}%" if lvl is not None else "unknown", "OK" if lvl is None or lvl >= 20 else "LOW"))
-            findings.append(("Battery Temp", f"{tmp:.1f}°C" if tmp is not None else "unknown", "OK" if tmp is None or tmp < 45 else "CHECK"))
-            summary = [f"AUTO DIAGNOSIS — {d.serial}", ""]
+            props = {}
+            for key, prop in DIAG_PROPS:
+                _, val = self.adb_cmd(d, ["shell", "getprop", prop], timeout=8)
+                props[key] = val.strip()
+
+            _, batt = self._adb_shell(d, "dumpsys", "battery", timeout=8)
+            _, mem = self._adb_shell(d, "cat", "/proc/meminfo", timeout=8)
+            _, df = self._adb_shell(d, "df", "-k", timeout=8)
+            _, uptime = self._adb_shell(d, "cat", "/proc/uptime", timeout=8)
+            _, thermal = self._adb_shell(d, "dumpsys", "thermalservice", timeout=10)
+            _, logcat = self.adb_cmd(d, ["logcat", "-d", "-t", "700"], timeout=30)
+
+            level_m = re.search(r"level:\s*(\d+)", batt, re.I)
+            temp_m = re.search(r"temperature:\s*(\d+)", batt, re.I)
+            voltage_m = re.search(r"voltage:\s*(\d+)", batt, re.I)
+            health_m = re.search(r"health:\s*(\d+)", batt, re.I)
+            lvl = int(level_m.group(1)) if level_m else None
+            temp = int(temp_m.group(1))/10 if temp_m else None
+            voltage = int(voltage_m.group(1))/1000 if voltage_m else None
+            health_map = {"1":"Unknown","2":"Good","3":"Overheat","4":"Dead","5":"Over voltage","6":"Failure","7":"Cold"}
+            health = health_map.get(health_m.group(1), "Unknown") if health_m else "Unknown"
+
+            findings = [
+                ("ADB transport", "Connected", "OK"),
+                ("Verified Boot", props.get("Verified Boot") or "unknown",
+                 "OK" if props.get("Verified Boot","").lower() in {"green",""} else "CHECK"),
+                ("Bootloader", "Locked" if props.get("Bootloader State") == "0" else "Unlocked/Unknown", "INFO"),
+                ("Slot", props.get("Slot") or "unknown", "INFO"),
+                ("Battery", f"{lvl}%" if lvl is not None else "unknown",
+                 "LOW" if lvl is not None and lvl < 20 else "OK"),
+                ("Battery Temp", f"{temp:.1f}°C" if temp is not None else "unknown",
+                 "CHECK" if temp is not None and temp >= 45 else "OK"),
+                ("Battery Health", health, "CHECK" if health not in {"Good","Unknown"} else "OK"),
+                ("Battery Voltage", f"{voltage:.3f} V" if voltage is not None else "unknown", "INFO"),
+            ]
+
+            faults = classify_logcat(logcat)
+            fault_counts = []
+            for category, lines in faults.items():
+                if lines:
+                    # De-duplicate repeated lines while retaining evidence count.
+                    unique = list(dict.fromkeys(lines))
+                    status = "CHECK" if category in {"Kernel/Boot","System Crash","App Crash","Storage","Modem/Radio","Thermal"} else "INFO"
+                    fault_counts.append((category, f"{len(lines)} hit(s)", status))
+                    findings.append((category, f"{len(lines)} hit(s)", status))
+
+            # Storage usage from df output; report only when a numeric percentage is found.
+            for line in (df or "").splitlines():
+                m = re.search(r"\s(\d+)%\s+\S+\s+\S+\s+\S+\s+\S+$", line.strip())
+                if m:
+                    used = int(m.group(1))
+                    if used >= 95:
+                        findings.append(("Storage Usage", f"{used}%", "CHECK"))
+                    break
+
+            summary = [f"SMART DIAGNOSIS — {d.serial}", f"Model: {d.model or d.product}", ""]
             for a, b, c in findings:
                 summary.append(f"{a}: {b} [{c}]")
+
             summary.append("")
-            if lvl is not None and lvl < 20:
-                summary.append("Recommendation: charge device before long write/flash operations.")
-            if boot.strip().lower() not in {"green", ""}:
-                summary.append("Recommendation: inspect verified-boot state before changing boot/system partitions.")
-            self.after(0, lambda: self._show_health_findings(findings, "\n".join(summary)))
-        self.run_async(work, "Running automatic diagnosis…")
+            if any(x[0] == "Storage" for x in findings):
+                summary.append("Recommendation: inspect storage/UFS logs and back up customer data before write operations.")
+            if any(x[0] == "Display" for x in findings):
+                summary.append("Recommendation: verify display symptoms; log evidence alone does not prove LCD/OLED hardware failure.")
+            if any(x[0] == "Modem/Radio" for x in findings):
+                summary.append("Recommendation: check baseband/IMEI/SIM/network diagnostics before hardware replacement.")
+            if any(x[0] in {"Kernel/Boot","System Crash"} for x in findings):
+                summary.append("Recommendation: capture a larger logcat/bugreport and inspect crash timestamps before flashing.")
+            if not fault_counts:
+                summary.append("No high-confidence fatal crash pattern detected in the captured logcat window.")
+
+            detail = (
+                "\n\n=== SMART DIAGNOSTIC EVIDENCE ===\n"
+                + "\n".join(summary)
+                + "\n\n=== THERMAL SERVICE ===\n" + (thermal[-4000:] if thermal else "Unavailable")
+                + "\n\n=== MEMORY ===\n" + (mem[:4000] if mem else "Unavailable")
+                + "\n\n=== STORAGE (df -k) ===\n" + (df[:4000] if df else "Unavailable")
+                + "\n\n=== UPTIME ===\n" + (uptime or "Unavailable")
+                + "\n\n=== LOGCAT CLASSIFICATION ===\n"
+            )
+            for cat, lines in faults.items():
+                if lines:
+                    detail += f"\n[{cat}] {len(lines)} hit(s)\n" + "\n".join(list(dict.fromkeys(lines))[-8:]) + "\n"
+
+            self.after(0, lambda: self._show_health_findings(findings, detail))
+        self.run_async(work, "Running smart hardware/software diagnosis…")
 
     def _show_health_findings(self, findings, text):
         self.diag_console.insert("end", "\n" + text + "\n")
@@ -1026,8 +1172,11 @@ class ANTechApp(tk.Tk):
             lvl = int(level.group(1)) if level else 0
             volt = int(voltage.group(1))/1000 if voltage else 0  # to V
             t = int(temp.group(1))/10 if temp else 0
-            cur = int(current.group(1))/1000 if current else 0
-            cur_avg = int(current_avg.group(1))/1000 if current_avg else 0
+            cur_raw = int(current.group(1)) if current else 0
+            cur_avg_raw = int(current_avg.group(1)) if current_avg else 0
+            # Android/OEMs differ on sign convention; status is authoritative for UI wording.
+            cur = cur_raw / 1000
+            cur_avg = cur_avg_raw / 1000
             st = status_map.get(status.group(1), "Unknown") if status else "Unknown"
             hl = health_map.get(health.group(1), "Unknown") if health else "Unknown"
             charge = int(charge_counter.group(1))/1000 if charge_counter else 0
@@ -1368,108 +1517,114 @@ DEVICE_POLICY SNIPPET:
 
     # ================== 7.0.0 PRO - JUDOL / MALWARE CLEANER ==================
     def scan_judol_cleaner(self, deep=False):
-        """Scan aplikasi judol/malware/adware"""
-        self.log("CLEANER", f"Memulai scan {'deep' if deep else 'cepat'} judol/malware...")
-        self.status_var.set("Scanning judol/malware...")
-        self.cleaner_text.delete("1.0", "end")
-        self.cleaner_text.insert("end", "🔍 Scanning aplikasi terinstall...\n\n")
-        
-        # get third party + all packages
-        cmd_flag = "-3" if not deep else ""
-        code, out = run_process([str(ADB_EXE), "shell", "pm", "list", "packages", cmd_flag])
-        if code != 0:
-            # fallback all
-            code, out = run_process([str(ADB_EXE), "shell", "pm", "list", "packages"])
-        pkgs = [line.replace("package:", "").strip() for line in out.splitlines() if "package:" in line]
-        
-        # get device admin
-        code_admin, out_admin = run_process([str(ADB_EXE), "shell", "dumpsys", "device_policy"])
-        
-        # get overlay permission
-        code_overlay, out_overlay = run_process([str(ADB_EXE), "shell", "cmd", "appops", "query-op", "SYSTEM_ALERT_WINDOW", "allow"])
+        """Targeted package-risk scan. Heuristics are evidence, not proof of malware."""
+        d = self.selected("ADB")
+        if not d:
+            return
 
-        found = []
-        for pkg in pkgs:
-            lower = pkg.lower()
-            score = 0
-            reasons = []
-            # keyword check
-            for kw in JUDOL_KEYWORDS:
-                if kw in lower:
+        def work():
+            self.after(0, lambda: self.cleaner_text.delete("1.0", "end"))
+            self.after(0, lambda: self.cleaner_text.insert("end", "🔍 Scanning aplikasi terinstall...\n\n"))
+
+            flag = [] if deep else ["-3"]
+            code, out = self.adb_cmd(d, ["shell", "pm", "list", "packages"] + flag, timeout=25)
+            if code != 0:
+                self.after(0, lambda: self.cleaner_text.insert("end", f"ADB error: {out}\n"))
+                return
+            pkgs = sorted({line.replace("package:", "").strip() for line in out.splitlines() if line.startswith("package:")})
+
+            _, out_admin = self._adb_shell(d, "dumpsys", "device_policy", timeout=15)
+            _, out_overlay = self._adb_shell(d, "cmd", "appops", "query-op", "SYSTEM_ALERT_WINDOW", "allow", timeout=15)
+
+            found = []
+            for pkg in pkgs:
+                lower = pkg.lower()
+                score = 0
+                reasons = []
+                hits = [kw for kw in JUDOL_KEYWORDS if kw in lower]
+                if hits:
+                    score += min(6, len(hits) * 2)
+                    reasons.append("Package keyword: " + ", ".join(hits[:4]))
+                if any(p in lower for p in SUSPICIOUS_PACKAGES_PATTERNS):
                     score += 3
-                    reasons.append(f"Keyword judol/adware: '{kw}'")
-            # suspicious pattern
-            if any(p in lower for p in ["slot", "gacor", "togel", "judol", "casino"]):
-                score += 2
-            # admin check
-            if pkg in out_admin:
-                score += 2
-                reasons.append("Aktif sebagai Device Admin!")
-            # overlay
-            if pkg in out_overlay:
-                score += 1
-                reasons.append("Punya izin tampil di atas aplikasi lain (pop-up iklan)")
-            # no launcher? hidden
-            if score >= 2:
-                found.append((pkg, score, reasons))
+                    reasons.append("Matches suspicious package pattern")
+                if pkg in out_admin:
+                    score += 2
+                    reasons.append("Device Admin reference detected")
+                if pkg in out_overlay:
+                    score += 1
+                    reasons.append("SYSTEM_ALERT_WINDOW allowed")
+                # Do not flag solely because an app has an overlay permission.
+                if score >= 3:
+                    found.append((pkg, score, reasons))
 
-        # sort by score
-        found.sort(key=lambda x: x[1], reverse=True)
-        
-        if not found:
-            self.cleaner_text.insert("end", "✅ Bersih! Tidak ditemukan aplikasi mencurigakan.\n")
-            self.status_var.set("System ready - Bersih")
-        else:
-            self.cleaner_text.insert("end", f"⚠️ DITEMUKAN {len(found)} APLIKASI MENCURIGAKAN:\n\n")
-            for pkg, score, reasons in found:
-                # try get app label
-                code_lab, lab_out = run_process([str(ADB_EXE), "shell", "dumpsys", "package", pkg])
-                label_match = re.search(r"versionName=([^\n]+)", lab_out)
-                vname = label_match.group(1) if label_match else ""
-                self.cleaner_text.insert("end", f"📦 {pkg}  [{vname}]  - Risk Score: {score}/8\n")
-                for r in reasons:
-                    self.cleaner_text.insert("end", f"   - {r}\n")
-                self.cleaner_text.insert("end", "\n")
-                # add to tree
-                self.cleaner_tree.insert("", "end", values=(pkg, score, "; ".join(reasons), vname))
+            found.sort(key=lambda x: (-x[1], x[0]))
+            self.after(0, lambda: [self.cleaner_tree.delete(i) for i in self.cleaner_tree.get_children()])
 
-            self.status_var.set(f"Ditemukan {len(found)} app mencurigakan!")
-            self.log("CLEANER", f"Scan selesai, ditemukan {len(found)}")
+            if not found:
+                msg = "✅ Tidak ditemukan package yang memenuhi threshold heuristik.\nCatatan: ini bukan antivirus proof-of-malware."
+                self.after(0, lambda: self.cleaner_text.insert("end", msg + "\n"))
+                self.after(0, lambda: self.status_var.set("System ready - Cleaner scan selesai"))
+            else:
+                def render():
+                    self.cleaner_text.insert("end", f"⚠️ {len(found)} package memenuhi threshold heuristik:\n\n")
+                    for pkg, score, reasons in found:
+                        _, detail = self.adb_cmd(d, ["shell", "dumpsys", "package", pkg], timeout=10)
+                        vm = re.search(r"versionName=([^\s]+)", detail or "")
+                        vname = vm.group(1) if vm else ""
+                        self.cleaner_tree.insert("", "end", values=(pkg, score, "; ".join(reasons), vname))
+                        self.cleaner_text.insert("end", f"📦 {pkg} [{vname}] Risk {score}\n   - " + "\n   - ".join(reasons) + "\n\n")
+                    self.cleaner_text.insert("end", "⚠️ Risk score adalah heuristik. Verifikasi package/signature sebelum menghapus system app.\n")
+                    self.status_var.set(f"Cleaner: {len(found)} package perlu verifikasi")
+                self.after(0, render)
+            self.log("CLEANER", f"Scan {'deep' if deep else 'quick'} selesai: {len(found)} candidate(s) on {d.serial}")
+
+        self.run_async(work, "Scanning package risk…")
 
     def remove_selected_cleaner(self):
+        d = self.selected("ADB")
+        if not d:
+            return
         sel = self.cleaner_tree.selection()
         if not sel:
             messagebox.showwarning(APP_NAME, "Pilih aplikasi yang mau dihapus dulu di tabel.")
             return
-        pkgs = [self.cleaner_tree.item(i)["values"][0] for i in sel]
-        if not messagebox.askyesno(APP_NAME, f"Hapus {len(pkgs)} aplikasi ini?\n\n" + "\n".join(pkgs) + "\n\nIni akan uninstall + clear data + remove admin."):
+        pkgs = [str(self.cleaner_tree.item(i)["values"][0]) for i in sel]
+        if not messagebox.askyesno(APP_NAME, f"Hapus/uninstall untuk user 0?\n\n" + "\n".join(pkgs)):
             return
-        for pkg in pkgs:
-            self.log("CLEANER", f"Removing {pkg}...")
-            # remove admin
-            run_process([str(ADB_EXE), "shell", "dpm", "remove-active-admin", f"{pkg}/.AdminReceiver"], timeout=10)
-            run_process([str(ADB_EXE), "shell", "dpm", "remove-active-admin", f"{pkg}/.DeviceAdmin"], timeout=10)
-            # clear data + uninstall
-            run_process([str(ADB_EXE), "shell", "pm", "clear", pkg], timeout=15)
-            run_process([str(ADB_EXE), "shell", "pm", "uninstall", "--user", "0", pkg], timeout=20)
-            code, _ = run_process([str(ADB_EXE), "shell", "pm", "uninstall", pkg], timeout=20)
-            self.cleaner_text.insert("end", f"\n🗑️ {pkg} -> {'Berhasil dihapus' if code==0 else 'Coba manual (mungkin system app, akan di-disable)'}")
-            if code != 0:
-                run_process([str(ADB_EXE), "shell", "pm", "disable-user", "--user", "0", pkg])
-                run_process([str(ADB_EXE), "shell", "pm", "clear", pkg])
-        messagebox.showinfo(APP_NAME, "Pembersihan selesai!\nCek log di bawah.")
-        self.status_var.set("System ready - Cleaning done")
+
+        def work():
+            results = []
+            for pkg in pkgs:
+                self.log("CLEANER", f"Removing {pkg} from {d.serial}...")
+                # First try user uninstall; never issue an unscoped uninstall against a random device.
+                code, out = self.adb_cmd(d, ["shell", "pm", "uninstall", "--user", "0", pkg], timeout=30)
+                if code != 0:
+                    # For system apps, disable only after explicit user confirmation already given.
+                    code2, out2 = self.adb_cmd(d, ["shell", "pm", "disable-user", "--user", "0", pkg], timeout=20)
+                    results.append(f"{pkg}: uninstall failed; disable-user={code2}")
+                else:
+                    results.append(f"{pkg}: {out or 'uninstalled for user 0'}")
+            self.after(0, lambda: self.cleaner_text.insert("end", "\n=== CLEANUP RESULT ===\n" + "\n".join(results) + "\n"))
+            self.log("CLEANER", f"Cleanup finished: {len(pkgs)} package(s)")
+            self.after(0, lambda: messagebox.showinfo(APP_NAME, "Pembersihan selesai. Periksa hasil dan lakukan reboot bila diperlukan."))
+
+        self.run_async(work, "Removing selected packages…")
 
     def disable_ads_system(self):
-        """Matikan notifikasi & iklan system yang sering dipakai adware"""
-        steps = [
-            [str(ADB_EXE), "shell", "settings", "put", "secure", "install_non_market_apps", "0"],
-            [str(ADB_EXE), "shell", "appops", "set", "com.android.vending", "SYSTEM_ALERT_WINDOW", "ignore"],
-        ]
-        for s in steps:
-            run_process(s)
-        self.log("CLEANER", "Ad countermeasures applied")
-        messagebox.showinfo(APP_NAME, "Fitur anti-iklan system diaktifkan:\n- Install non-market dimatikan\n- Cek manual: Settings > Apps > Special access > Display over other apps > matikan app tidak dikenal")
+        """Apply a conservative setting and report what was actually changed."""
+        d = self.selected("ADB")
+        if not d:
+            return
+        code, out = self._adb_shell(d, "settings", "put", "secure", "install_non_market_apps", "0", timeout=10)
+        self.log("CLEANER", f"Non-market install restriction command code={code}")
+        messagebox.showinfo(
+            APP_NAME,
+            "Perangkat ditargetkan secara spesifik.\n\n"
+            "• Instalasi sumber tidak dikenal dibatasi bila ROM mendukung setting ini.\n"
+            "• Izin overlay aplikasi mencurigakan harus diverifikasi per-package.\n"
+            "• Tidak ada perubahan AppOps Play Store yang dipaksakan."
+        )
 
     # ================== END CLEANER ==================
 
@@ -1500,9 +1655,10 @@ DEVICE_POLICY SNIPPET:
                 if not remote_ver:
                     raise ValueError("Version info kosong")
                 # compare version simple
-                if remote_ver.strip() != APP_VERSION.strip():
+                if version_is_newer(remote_ver, APP_VERSION):
                     def ask():
                         if messagebox.askyesno(f"{APP_NAME} Update Tersedia", f"Versi baru: {remote_ver}\nVersi sekarang: {APP_VERSION}\n\nChangelog:\n{changelog}\n\nDownload dan update sekarang? (Aplikasi akan restart)"):
+                            self._pending_update_sha256 = str(data.get("sha256", "") or "")
                             self.download_and_apply_update(remote_url, remote_ver)
                         else:
                             self.status_var.set("Update tersedia - skip")
@@ -1532,6 +1688,10 @@ DEVICE_POLICY SNIPPET:
                     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
                     with urllib.request.urlopen(req, timeout=120) as resp, open(tmp_exe, "wb") as out:
                         shutil.copyfileobj(resp, out)
+                    expected_hash = getattr(self, "_pending_update_sha256", "")
+                    if expected_hash and sha256_file(tmp_exe).lower() != expected_hash.lower():
+                        tmp_exe.unlink(missing_ok=True)
+                        raise ValueError("SHA-256 update tidak cocok dengan manifest.")
                     # buat updater.bat untuk replace exe yang sedang jalan
                     bat_path = current_exe.parent / "updater.bat"
                     bat_content = f"""@echo off
@@ -1551,6 +1711,10 @@ del "%~f0"
                     req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
                     with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as out:
                         shutil.copyfileobj(resp, out)
+                    expected_hash = getattr(self, "_pending_update_sha256", "")
+                    if expected_hash and sha256_file(tmp_path).lower() != expected_hash.lower():
+                        tmp_path.unlink(missing_ok=True)
+                        raise ValueError("SHA-256 update tidak cocok dengan manifest.")
                     current_file = Path(__file__).resolve()
                     backup = current_file.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.py")
                     shutil.copy(current_file, backup)
@@ -1558,7 +1722,7 @@ del "%~f0"
                     tmp_path.unlink(missing_ok=True)
                     self.after(0, lambda: self.log("UPDATE", f"Update {new_ver} berhasil, backup {backup.name}"))
                     self.after(0, lambda: messagebox.showinfo(APP_NAME, f"Update {new_ver} berhasil!\nAplikasi akan restart.\nBackup: {backup.name}"))
-                    self.after(0, lambda: os.execlp("python", "python", str(current_file)))
+                    self.after(0, lambda: os.execl(sys.executable, sys.executable, str(current_file)))
             except Exception as e:
                 self.after(0, lambda: self.log("UPDATE", f"Download update gagal: {e}"))
                 self.after(0, lambda: messagebox.showerror(APP_NAME, f"Gagal download update:\n{e}"))
@@ -1579,6 +1743,13 @@ del "%~f0"
             "selected_device": asdict(selected) if selected else None,
             "devices_seen": [asdict(d) for d in self.devices],
             "recent_logs": [dict(created_at=a, category=b, message=c) for a, b, c in self.db.recent_logs(120)],
+            "tooling": {
+                "adb_path": str(ADB_EXE),
+                "fastboot_path": str(FASTBOOT_EXE),
+                "adb_exists": ADB_EXE.exists(),
+                "fastboot_exists": FASTBOOT_EXE.exists(),
+                "python": os.environ.get("PYTHON_VERSION", ""),
+            },
         }
         path.write_text(json.dumps(payload, indent=2, ensure_ascii=False), encoding="utf-8")
         self.log("REPORT", f"Exported {path.name}")
