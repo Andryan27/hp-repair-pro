@@ -1,5 +1,5 @@
 {
-  "version": "7.0.0 PRO JUDOL CLEANER",
+  "version": "7.0 PRO JUDOL CLEANER",
   "exe_url": "https://github.com/Andryan27/hp-repair-pro/releases/download/7.0/AN_Tech_7.0.0.exe",
   "download_url": "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/app/main.py",
   "changelog": "Fix DLL error - pakai onedir biar antivirus gak hapus",
