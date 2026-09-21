@@ -15,11 +15,11 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 APP_NAME = "AN tech"
-APP_VERSION = "1.5.0 PRO"
+APP_VERSION = "6.0.0 PRO"
 APP_TAGLINE = "Professional Smartphone Diagnostic & Service Center"
 # AUTO UPDATE CONFIG - ganti URL server kamu nanti
-UPDATE_SERVER_URL = "https://raw.githubusercontent.com/andri-antech/ANtech/main/version.json"
-UPDATE_DOWNLOAD_URL = "https://raw.githubusercontent.com/andri-antech/ANtech/main/app/main.py"
+UPDATE_SERVER_URL = "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/version.json"
+UPDATE_DOWNLOAD_URL = "https://raw.githubusercontent.com/Andryan27/hp-repair-pro/main/app/main.py"
 BASE_DIR = Path(__file__).resolve().parent.parent
 TOOLS_DIR = BASE_DIR / "tools"
 DATA_DIR = BASE_DIR / "data"
@@ -1355,16 +1355,20 @@ DEVICE_POLICY SNIPPET:
             self.logs_text.insert("end", f"[{created}] {category}\n{message}\n\n")
 
     def check_auto_update(self, silent=False):
-        """Cek update dari server tanpa ubah desain"""
+        """Cek update dari server tanpa ubah desain - support EXE + PY"""
         def work():
             try:
-                import urllib.request
+                import urllib.request, sys
                 self.after(0, lambda: self.status_var.set("Checking update..."))
                 req = urllib.request.Request(UPDATE_SERVER_URL, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
                 with urllib.request.urlopen(req, timeout=8) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
                 remote_ver = data.get("version", "")
-                remote_url = data.get("download_url", UPDATE_DOWNLOAD_URL)
+                is_frozen = getattr(sys, 'frozen', False)
+                if is_frozen:
+                    remote_url = data.get("exe_url", data.get("download_url", UPDATE_DOWNLOAD_URL))
+                else:
+                    remote_url = data.get("download_url", UPDATE_DOWNLOAD_URL)
                 changelog = data.get("changelog", "Update tersedia")
                 if not remote_ver:
                     raise ValueError("Version info kosong")
@@ -1391,22 +1395,43 @@ DEVICE_POLICY SNIPPET:
     def download_and_apply_update(self, url, new_ver):
         def work():
             try:
-                import urllib.request, shutil
+                import urllib.request, shutil, sys
                 self.after(0, lambda: self.status_var.set(f"Downloading {new_ver}..."))
-                tmp_path = BASE_DIR / "app" / f"main_new_{new_ver.replace(' ', '_')}.py"
-                req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
-                with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as out:
-                    shutil.copyfileobj(resp, out)
-                # backup old
-                current_file = Path(__file__).resolve()
-                backup = current_file.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.py")
-                shutil.copy(current_file, backup)
-                # replace
-                shutil.copy(tmp_path, current_file)
-                tmp_path.unlink(missing_ok=True)
-                self.after(0, lambda: self.log("UPDATE", f"Update {new_ver} berhasil, backup {backup.name}"))
-                self.after(0, lambda: messagebox.showinfo(APP_NAME, f"Update {new_ver} berhasil!\nAplikasi akan restart.\nBackup: {backup.name}"))
-                self.after(0, lambda: os.execlp("python", "python", str(current_file)))
+                is_frozen = getattr(sys, 'frozen', False)
+                if is_frozen or url.lower().endswith(".exe"):
+                    # --- MODE EXE ---
+                    current_exe = Path(sys.executable).resolve()
+                    tmp_exe = current_exe.parent / f"AN_Tech_new_{new_ver.replace(' ', '_')}.exe"
+                    req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+                    with urllib.request.urlopen(req, timeout=120) as resp, open(tmp_exe, "wb") as out:
+                        shutil.copyfileobj(resp, out)
+                    # buat updater.bat untuk replace exe yang sedang jalan
+                    bat_path = current_exe.parent / "updater.bat"
+                    bat_content = f"""@echo off
+timeout /t 2 /nobreak >nul
+move /Y "{tmp_exe}" "{current_exe}"
+start "" "{current_exe}"
+del "%~f0"
+"""
+                    bat_path.write_text(bat_content, encoding="utf-8")
+                    self.after(0, lambda: self.log("UPDATE", f"EXE {new_ver} downloaded, running updater"))
+                    self.after(0, lambda: messagebox.showinfo(APP_NAME, f"Update {new_ver} berhasil didownload!\nAplikasi akan restart otomatis."))
+                    self.after(0, lambda: subprocess.Popen([str(bat_path)], creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0)))
+                    self.after(1000, lambda: self.destroy())
+                else:
+                    # --- MODE PY ---
+                    tmp_path = BASE_DIR / "app" / f"main_new_{new_ver.replace(' ', '_')}.py"
+                    req = urllib.request.Request(url, headers={"User-Agent": f"{APP_NAME}/{APP_VERSION}"})
+                    with urllib.request.urlopen(req, timeout=30) as resp, open(tmp_path, "wb") as out:
+                        shutil.copyfileobj(resp, out)
+                    current_file = Path(__file__).resolve()
+                    backup = current_file.with_suffix(f".backup_{datetime.now().strftime('%Y%m%d_%H%M%S')}.py")
+                    shutil.copy(current_file, backup)
+                    shutil.copy(tmp_path, current_file)
+                    tmp_path.unlink(missing_ok=True)
+                    self.after(0, lambda: self.log("UPDATE", f"Update {new_ver} berhasil, backup {backup.name}"))
+                    self.after(0, lambda: messagebox.showinfo(APP_NAME, f"Update {new_ver} berhasil!\nAplikasi akan restart.\nBackup: {backup.name}"))
+                    self.after(0, lambda: os.execlp("python", "python", str(current_file)))
             except Exception as e:
                 self.after(0, lambda: self.log("UPDATE", f"Download update gagal: {e}"))
                 self.after(0, lambda: messagebox.showerror(APP_NAME, f"Gagal download update:\n{e}"))
